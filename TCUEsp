@@ -1,0 +1,111 @@
+	-- TCU : RE-CODE - enemies only (RegisterModel). No network, native Matcha UI.
+	-- Menu tab TCU, everything OFF at start. Unload: button or Delete key.
+
+	local Players = game:GetService("Players")
+	local UIS = game:GetService("UserInputService")
+	local WS = game:GetService("Workspace")
+
+	_G.__TCU_EPOCH = (_G.__TCU_EPOCH or 0) + 1
+	local myEpoch = _G.__TCU_EPOCH
+	local function alive() return myEpoch == _G.__TCU_EPOCH end
+	local running = true
+
+	local DEF = { scan = 1000, cap = 24 }
+	local function gv(id, def)
+		local ok, v = pcall(function() return UI.GetValue(id) end)
+		if not ok or v == nil then return def end
+		return v
+	end
+
+	pcall(function() UI.RemoveTab("TCU") end)
+	UI.AddTab("TCU", function(tab)
+		local sec = tab:Section("Enemies", "Left")
+		sec:Toggle("tcu_enemy", "ESP (Bathub only, no Alliance/players)")
+		sec:SliderInt("tcu_cap", "Enemy cap", 1, 40, DEF.cap)
+		sec:SliderInt("tcu_scan", "Scan ms", 300, 3000, DEF.scan)
+		sec:Button("Unload", function()
+			running = false
+			pcall(function() UI.RemoveTab("TCU") end)
+		end)
+	end)
+
+	UIS.InputBegan:Connect(function(input)
+		if input.KeyCode == Enum.KeyCode.Delete then
+			running = false
+			pcall(function() UI.RemoveTab("TCU") end)
+		end
+	end)
+
+	-- only *bathub* in Workspace.AI, alive. players + Alliance skipped by design.
+	local enemyHandles = {}
+	local function isEnemy(m)
+		if not m or m.ClassName ~= "Model" then return false end
+		if not string.find(string.lower(m.Name), "bathub") then return false end
+		if not m:FindFirstChild("Head") then return false end
+		if not m:FindFirstChild("HumanoidRootPart") then return false end
+		local hum = m:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then return false end
+		return true
+	end
+
+	task.spawn(function()
+		while alive() and running do
+			local okk, errk = pcall(function()
+				local cap = gv("tcu_cap", DEF.cap)
+				local count = 0
+				for _ in pairs(enemyHandles) do count = count + 1 end
+				local ai = WS:FindFirstChild("AI")
+				if gv("tcu_enemy", false) and ai then
+					local seen = {}
+					for _, m in ipairs(ai:GetChildren()) do
+						if count >= cap then break end
+						if isEnemy(m) then
+							local key = m.Address
+							seen[key] = true
+							if not enemyHandles[key] then
+								local head = m:FindFirstChild("Head")
+								local root = m:FindFirstChild("HumanoidRootPart")
+								local hum = m:FindFirstChildOfClass("Humanoid")
+								local disp = m.Name
+								local max0 = hum.MaxHealth
+								local ok, h = pcall(function()
+									return RegisterModel{
+										entry = m,
+										ShouldDraw = function() return gv("tcu_enemy", false) and running end,
+										GetHead = function() return head end,
+										GetRoot = function() return root end,
+										GetDisplayName = function() return disp end,
+										GetHealth = function()
+											local okh, v = pcall(function() return hum.Health end)
+											return (okh and v) or 0
+										end,
+										GetMaxHealth = function() return max0 end,
+									}
+								end)
+								if ok and h then
+									enemyHandles[key] = h
+									count = count + 1
+								end
+							end
+						end
+					end
+					for key, h in pairs(enemyHandles) do
+						if not seen[key] then
+							pcall(function() h:Remove() end)
+							enemyHandles[key] = nil
+						end
+					end
+				else
+					for key, h in pairs(enemyHandles) do
+						pcall(function() h:Remove() end)
+						enemyHandles[key] = nil
+					end
+				end
+			end)
+			if not okk then print("[tcu] enemy err: " .. tostring(errk)) end
+			task.wait(gv("tcu_scan", DEF.scan) / 1000)
+		end
+		for _, h in pairs(enemyHandles) do pcall(function() h:Remove() end) end
+	end)
+
+	print("[tcu] enemies-only started, ESP OFF")
